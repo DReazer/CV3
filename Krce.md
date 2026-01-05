@@ -1,6 +1,6 @@
 **Remote Command Execution**
 
-1.60.03 version （1.60.03 release on linux）
+1.60.03 version （1.60.03 release on **linux**）
 ![](https://github.com/DReazer/CV3/blob/main/pngs/1.png)
 
 Through the registration function, you can register a **normal account**
