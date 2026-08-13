@@ -149,7 +149,3 @@ Set `JWT_SECRET` to a long random value, recreate the API container, and repeat 
 | Self-host guide | https://docs.refly.ai/community-version/self-deploy |
 | CWE-798 | https://cwe.mitre.org/data/definitions/798.html |
 | CWE-287 | https://cwe.mitre.org/data/definitions/287.html |
-
-## 8. Suggested Vendor Contact
-
-For Refly 1.1.0, the tagged README asked that security reports go to `support@refly.ai` rather than a public issue. Current `main` README no longer contains that section and there is no `SECURITY.md`. Prefer email to `support@refly.ai`, or a private GitHub Security Advisory with “Request a CVE”.
