@@ -1,4 +1,4 @@
-# Security Advisory: Hard-coded Default JWT Secret in Official Self-Hosted Refly
+# Hard-coded Default JWT Secret in Official Self-Hosted Refly
 
 | Field | Value |
 | --- | --- |
