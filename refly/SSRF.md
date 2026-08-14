@@ -1,4 +1,4 @@
-# Security Advisory: Server-Side Request Forgery in Official Self-Hosted Refly
+# Server-Side Request Forgery in Refly
 
 | Field | Value |
 | --- | --- |
